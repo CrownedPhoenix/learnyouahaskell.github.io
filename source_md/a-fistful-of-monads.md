@@ -210,17 +210,17 @@ This is what the type class looks like:
 ```{.haskell:hs}
 class Applicative m => Monad m where
     return :: a -> m a
+    return = pure
 
     (>>=) :: m a -> (a -> m b) -> m b
 
     (>>) :: m a -> m b -> m b
     x >> y = x >>= \_ -> y
-
-    fail :: String -> m a
-    fail msg = error msg
 ```
 
 ![this is you on monads](assets/images/a-fistful-of-monads/kid.png){.right width=363 height=451}
+
+In order to make a `Monad` instance, we first need an `Applicative` instance, just like `Applicative` itself needs `Functor`.
 
 The first function that the `Monad` type class defines is `return`.
 It's the same as `pure`, only with a different name.
@@ -245,24 +245,15 @@ It's like function application, only instead of taking a normal value and feedin
 Next up, we have `>>`.
 We won't pay too much attention to it for now because it comes with a default implementation and we pretty much never implement it when making `Monad` instances.
 
-The final function of the `Monad` type class is `fail`.
-We never use it explicitly in our code.
-Instead, it's used by Haskell to enable failure in a special syntactic construct for monads that we'll meet later.
-We don't need to concern ourselves with `fail` too much for now.
-
 Now that we know what the `Monad` type class looks like, let's take a look at how `Maybe` is an instance of `Monad`!
 
 ```{.haskell:hs}
 instance Monad Maybe where
-    return x = Just x
     Nothing >>= f = Nothing
     Just x >>= f  = f x
-    fail _ = Nothing
 ```
 
-`return` is the same as `pure`, so that one's a no-brainer.
-We do what we did in the `Applicative` type class and wrap it in a `Just`.
-
+Both `return` and `(>>)` have default implementations, so we usually omit them in instances.
 The `>>=` function is the same as our `applyMaybe`.
 When feeding the `Maybe a` to our function, we keep in mind the context and return a `Nothing` if the value on the left is `Nothing` because if there's no value then there's no way to apply our function to it.
 If it's a `Just` we take what's inside and apply `f` to it.
@@ -775,19 +766,19 @@ When matching on a pattern in a function fails, the next pattern is matched.
 If the matching falls through all the patterns for a given function, an error is thrown and our program crashes.
 On the other hand, failed pattern matching in `let` expressions results in an error being produced right away, because the mechanism of falling through patterns isn't present in `let` expressions.
 When pattern matching fails in a `do` expression, the `fail` function is called.
-It's part of the `Monad` type class and it enables failed pattern matching to result in a failure in the context of the current monad instead of making our program crash.
-Its default implementation is this:
+It's part of the `MonadFail` type class, and it enables failed pattern matching to result in a failure in the context of the current monad instead of making our program crash.
 
 ```{.haskell:hs}
-fail :: (Monad m) => String -> m a
-fail msg = error msg
+class Monad m => MonadFail m where
+    fail :: String -> m a
 ```
 
-So by default it does make our program crash, but monads that incorporate a context of possible failure (like `Maybe`) usually implement it on their own.
-For `Maybe`, its implemented like so:
+Monads that incorporate a context of possible failure (like `Maybe`) usually implement it.
+For `Maybe`, it's implemented like so:
 
 ```{.haskell:hs}
-fail _ = Nothing
+instance MonadFail Maybe where
+    fail _ = Nothing
 ```
 
 It ignores the error message and makes a `Nothing`.
@@ -838,9 +829,7 @@ Let's go ahead and see what the `Monad` instance for lists looks like:
 
 ```{.haskell:hs}
 instance Monad [] where
-    return x = [x]
     xs >>= f = concat (map f xs)
-    fail _ = []
 ```
 
 `return` does the same thing as `pure`, so we should already be familiar with `return` for lists.
@@ -958,33 +947,32 @@ ghci> [ x | x <- [1..50], '7' `elem` show x ]
 
 We apply `show` to `x` to turn our number into a string and then we check if the character `'7'` is part of that string.
 Pretty clever.
-To see how filtering in list comprehensions translates to the list monad, we have to check out the `guard` function and the `MonadPlus` type class.
-The `MonadPlus` type class is for monads that can also act as monoids.
+To see how filtering in list comprehensions translates to the list monad, we have to check out the `guard` function and the `Alternative` type class.
+ The `Alternative` type class is for applicative functors that support a notion of failure (`empty`) and choice (`(<|>)`) that behave analogously to the operations of `Monoid`.
 Here's its definition:
 
 ```{.haskell:hs}
-class Monad m => MonadPlus m where
-    mzero :: m a
-    mplus :: m a -> m a -> m a
+class Applicative f => Alternative f where
+    empty :: f a
+    (<|>) :: f a -> f a -> f a
 ```
 
-`mzero` is synonymous to `mempty` from the `Monoid` type class and `mplus` corresponds to `<>`.
-Because lists are monoids as well as monads, they can be made an instance of this type class:
-
+`empty` is analogous to `mempty` from `Monoid`, and `(<|>)` resembles to `<>`, but they aren't the same thing as a `Monoid` instance in general.
+ Lists are an instance of `Alternative`, where `empty` is `[]` and `(<|>)` concatenates lists:
 ```{.haskell:hs}
-instance MonadPlus [] where
-    mzero = []
-    mplus = (++)
+instance Alternative [] where
+    empty = []
+    (<|>) = (++)
 ```
 
-For lists `mzero` represents a non-deterministic computation that has no results at all --- a failed computation.
-`mplus` joins two non-deterministic values into one.
+For lists, `empty` represents a non-deterministic computation that has no results at all --- a failed computation.
+`(<|>)` joins two non-deterministic values into one.
 The `guard` function is defined like this:
 
 ```{.haskell:hs}
-guard :: (MonadPlus m) => Bool -> m ()
-guard True = return ()
-guard False = mzero
+guard :: (Alternative f) => Bool -> f ()
+guard True = pure ()
+guard False = empty
 ```
 
 It takes a boolean value and if it's `True`, takes a `()` and puts it in a minimal default context that still succeeds.
